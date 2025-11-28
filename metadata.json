@@ -1,0 +1,7 @@
+{
+  "name": "100x AI Candidate Voice Bot",
+  "description": "A real-time voice conversational AI representing a candidate for the 100x Gen AI role, powered by Gemini Live API.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
