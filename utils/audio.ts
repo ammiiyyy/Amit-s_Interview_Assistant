@@ -51,7 +51,7 @@ export async function decodeAudioData(
  * Creates a blob suitable for the Gemini Live API from Float32 input data.
  * Converts Float32 (Web Audio API standard) to Int16 (Gemini requirement).
  */
-export function createPcmBlob(data: Float32Array): Blob {
+export function createPcmBlob(data: Float32Array, sampleRate: number): Blob {
   const l = data.length;
   const int16 = new Int16Array(l);
   for (let i = 0; i < l; i++) {
@@ -60,6 +60,6 @@ export function createPcmBlob(data: Float32Array): Blob {
   }
   return {
     data: encode(new Uint8Array(int16.buffer)),
-    mimeType: 'audio/pcm;rate=16000',
+    mimeType: `audio/pcm;rate=${sampleRate}`,
   };
 }

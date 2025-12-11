@@ -76,19 +76,7 @@ export const useLiveSession = () => {
     // Immediately set connected flag to false to stop processing incoming/outgoing data
     connectedRef.current = false;
 
-    // 1. Close Session
-    if (sessionPromiseRef.current) {
-        sessionPromiseRef.current.then(session => {
-            try {
-                session.close();
-            } catch (e) {
-                console.warn("Error closing session:", e);
-            }
-        });
-        sessionPromiseRef.current = null;
-    }
-
-    // 2. Stop Audio Sources
+    // 1. Stop Audio Sources & Processing first (Stop the data flow)
     audioSourcesRef.current.forEach(source => {
       try {
         source.stop();
@@ -98,7 +86,6 @@ export const useLiveSession = () => {
     });
     audioSourcesRef.current.clear();
 
-    // 3. Disconnect Audio Nodes
     if (audioProcessingNodeRef.current) {
       try {
         audioProcessingNodeRef.current.disconnect();
@@ -112,13 +99,28 @@ export const useLiveSession = () => {
       sourceRef.current = null;
     }
 
+    // 2. Close Session
+    if (sessionPromiseRef.current) {
+        // Capture the promise and clear the ref immediately to prevent race conditions
+        const currentPromise = sessionPromiseRef.current;
+        sessionPromiseRef.current = null;
+        
+        currentPromise.then(session => {
+            try {
+                session.close();
+            } catch (e) {
+                console.warn("Error closing session:", e);
+            }
+        }).catch(() => {}); // Ignore errors from the promise itself
+    }
+
     // Cleanup Worklet URL
     if (workletUrlRef.current) {
         URL.revokeObjectURL(workletUrlRef.current);
         workletUrlRef.current = null;
     }
     
-    // 4. Close Contexts
+    // 3. Close Contexts
     if (inputContextRef.current && inputContextRef.current.state !== 'closed') {
       inputContextRef.current.close().catch(() => {});
       inputContextRef.current = null;
@@ -134,6 +136,9 @@ export const useLiveSession = () => {
 
   const connect = useCallback(async () => {
     try {
+      // Ensure we start clean
+      disconnect();
+      
       setConnectionState(ConnectionState.CONNECTING);
       setError(null);
 
@@ -147,7 +152,10 @@ export const useLiveSession = () => {
       // Initialize Audio Contexts
       // Use standard AudioContext if available, fallback to webkit only if necessary
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const inputCtx = new AudioContextClass({ sampleRate: 16000 });
+      
+      // Allow the browser to choose the sample rate (usually 44100 or 48000)
+      // This prevents issues where the hardware doesn't support 16000
+      const inputCtx = new AudioContextClass();
       const outputCtx = new AudioContextClass({ sampleRate: 24000 });
       
       // Resume contexts immediately to ensure they are active (Chrome sometimes suspends them)
@@ -236,8 +244,8 @@ export const useLiveSession = () => {
               nextStartTimeRef.current = 0;
             }
           },
-          onclose: () => {
-             console.log("Session Closed");
+          onclose: (event: CloseEvent) => {
+             console.log("Session Closed", event.code, event.reason);
              if (mountedRef.current && connectedRef.current) {
                  // Only set to disconnected if we didn't initiate the disconnect ourselves
                  connectedRef.current = false;
@@ -258,20 +266,42 @@ export const useLiveSession = () => {
       });
       sessionPromiseRef.current = sessionPromise;
 
-      // Helper to send data
+      // Helper to send data with robust error handling
       const sendRealtimeInput = (data: Float32Array) => {
-          if (!connectedRef.current) return;
-          const pcmBlob = createPcmBlob(data);
-          sessionPromise.then(session => {
-            if (connectedRef.current) {
-              try {
-                session.sendRealtimeInput({ media: pcmBlob });
-              } catch (e) {
-                if (connectedRef.current) console.error("Error sending input:", e);
+          // 1. First check: Do not proceed if we are already disconnected or have no session
+          if (!connectedRef.current || !sessionPromiseRef.current) return;
+          
+          // USE THE ACTUAL SAMPLE RATE
+          const sampleRate = inputContextRef.current?.sampleRate || 16000;
+          const pcmBlob = createPcmBlob(data, sampleRate);
+          
+          // Capture promise at the moment of call
+          const currentPromise = sessionPromiseRef.current;
+
+          currentPromise.then(async (session) => {
+            // 2. Second check: Ensure connection is still active before sending
+            if (!connectedRef.current) return;
+            
+            try {
+              // Await the send to ensure we catch both sync errors and promise rejections
+              await session.sendRealtimeInput({ media: pcmBlob });
+            } catch (e: any) {
+              // 3. Graceful Error Handling
+              // Completely suppress errors related to closing states. 
+              // These are expected race conditions when the socket closes.
+              const msg = e.message || '';
+              if (msg.includes("CLOSING") || msg.includes("CLOSED")) {
+                  // Do nothing, do not log.
+                  return;
               }
+              // Only log genuine unexpected errors
+              console.error("Error sending input:", e);
             }
           }).catch(e => {
-             console.debug("Session promise failed:", e);
+             // Suppress errors if we are already disconnected
+             if (connectedRef.current) {
+                 console.debug("Session promise failed:", e);
+             }
           });
       };
 
