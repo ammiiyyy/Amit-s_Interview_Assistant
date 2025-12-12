@@ -5,21 +5,35 @@ node_modules
 
 # Testing
 coverage
-
 # Production
 build
 dist
-
 # Environment variables (Sensitive Data)
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-
 # Misc
 .DS_Store
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# Node
+node_modules/
+yarn-error.log
+# Build output
+dist/
+build/
+.next/
+.out/
+# Environment files (DO NOT UPLOAD)
+.env.*.local
+# System files
+Thumbs.db
+# Logs
+logs/
+# IDE folders
+.vscode/
+.idea/
